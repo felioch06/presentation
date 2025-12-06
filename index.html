@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cuestionario de Fenómenos Inexplicables</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        /* ESTILOS GENERALES */
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #020617; /* Fondo oscuro */
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden; /* Evitar scroll, es una presentación */
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* CONTENEDOR DE DIAPOSITIVAS */
+        .presentation-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background-color: #0f172a;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            overflow: hidden;
+        }
+
+        /* DIAPOSITIVA INDIVIDUAL */
+        .slide {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.5s ease, transform 0.5s ease;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px 60px;
+            background: radial-gradient(circle at 50% 50%, rgba(139, 92, 246, 0.05) 0%, #0f172a 70%);
+        }
+
+        .slide.active {
+            opacity: 1;
+            visibility: visible;
+            z-index: 10;
+        }
+
+        /* TIPOGRAFÍA */
+        h1, h2, h3 { font-family: 'Space Grotesk', sans-serif; margin: 0; }
+        
+        h1 {
+            font-size: 4rem;
+            background: linear-gradient(to right, #a78bfa, #2dd4bf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+            margin-bottom: 20px;
+            line-height: 1.1;
+        }
+
+        h2 {
+            font-size: 2.5rem;
+            color: #a78bfa;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        p, li { font-size: 1.3rem; line-height: 1.5; color: #cbd5e1; }
+
+        /* CONTROLES DE NAVEGACIÓN */
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            right: 40px;
+            z-index: 100;
+            display: flex;
+            gap: 20px;
+        }
+
+        .btn-nav {
+            background-color: rgba(30, 41, 59, 0.8);
+            color: white;
+            border: 1px solid #475569;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .btn-nav:hover {
+            background-color: #2dd4bf;
+            color: #0f172a;
+            border-color: #2dd4bf;
+        }
+
+        .slide-counter {
+            position: absolute;
+            bottom: 30px;
+            left: 40px;
+            color: #64748b;
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 1.2rem;
+            z-index: 100;
+        }
+
+        /* ESTILOS DE CONTENIDO */
+        .two-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            width: 100%;
+            height: auto;
+            flex-grow: 1;
+            max-height: 80vh;
+            align-items: center;
+        }
+
+        .img-box {
+            width: 100%;
+            height: 100%;
+            max-height: 60vh;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 25px rgba(0,0,0,0.5);
+            border: 1px solid #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1e293b;
+        }
+
+        .img-box img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* ESTILOS DE QUIZ */
+        .quiz-list {
+            list-style: none;
+            padding: 0;
+            width: 100%;
+        }
+
+        .quiz-list li {
+            background: rgba(30, 41, 59, 0.5);
+            margin-bottom: 12px;
+            padding: 15px 20px;
+            border-radius: 10px;
+            border: 1px solid #334155;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        
+        .quiz-list li:hover {
+            transform: translateX(5px);
+            border-color: #2dd4bf;
+            background: rgba(30, 41, 59, 0.8);
+        }
+
+        /* ESTILOS DE RESPUESTA */
+        .answer-box {
+            background: rgba(16, 185, 129, 0.1);
+            border: 2px solid #10b981;
+            padding: 40px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 900px;
+        }
+        
+        .answer-label {
+            color: #10b981;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        .big-text {
+            font-size: 5rem;
+            color: #f1f5f9;
+            font-family: 'Space Grotesk', sans-serif;
+            text-align: center;
+        }
+        
+        /* Media Query para pantallas pequeñas */
+        @media (max-width: 1000px) {
+            .two-columns {
+                grid-template-columns: 1fr;
+                gap: 20px;
+                text-align: center;
+            }
+            .img-box {
+                max-height: 200px;
+                order: -1;
+            }
+            h1 { font-size: 2.5rem; }
+            h2 { font-size: 1.8rem; }
+            p, li { font-size: 1rem; }
+            .slide { padding: 20px; }
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="presentation-container">
+    
+    <!-- CONTROLES -->
+    <div class="slide-counter">Diapositiva <span id="currentSlide">1</span> / <span id="totalSlides">20</span></div>
+    <div class="controls">
+        <button class="btn-nav" onclick="prevSlide()"><i class="fa-solid fa-arrow-left"></i> Anterior</button>
+        <button class="btn-nav" onclick="nextSlide()">Siguiente <i class="fa-solid fa-arrow-right"></i></button>
+    </div>
+
+    <!-- DIAPOSITIVA 1: TÍTULO -->
+    <div class="slide active">
+        <p style="color: #2dd4bf; letter-spacing: 3px; text-transform: uppercase; font-weight: bold;">Confidencial</p>
+        <h1>Fenómenos Inexplicables<br>& Conspiraciones Domésticas</h1>
+        <p style="font-size: 1.5rem; margin-top: 20px;">Un análisis multidisciplinario de la realidad absurda.</p>
+        <p style="font-size: 1rem; color: #64748b;">Presiona F11 para pantalla completa</p>
+
+    </div>
+
+    <!-- PREGUNTA 1 (VACAS) -->
+    <div class="slide">
+        <h2>01. Abducción Bovina</h2>
+        <div class="two-columns">
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué los extraterrestres solo secuestran vacas?</p>
+                <ul class="quiz-list">
+                    <li>A) Porque son fanáticos del lácteo orgánico.</li>
+                    <li>B) Porque las vacas no preguntan demasiado.</li>
+                    <li>C) Porque intentaron con ovejas y se arrepintieron.</li>
+                    <li>D) Porque las vacas son las embajadoras de la Tierra.</li>
+                </ul>
+            </div>
+            <div class="img-box">
+                <img src="images/vaca.png" alt="Vaca">
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 1 -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">D) Son embajadoras</h2>
+            <p>"Las vacas firmaron un tratado intergaláctico en 1973 para representar a la Tierra, pero nadie se enteró porque lo hicieron en lengua bovina."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 2 (PERROS) -->
+    <div class="slide">
+        <h2>02. Infiltración Canina</h2>
+        <div class="two-columns">
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/a78bfa?text=Perro+Sospechoso&font=roboto" alt="Perro">
+            </div>
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Cómo saber si tu perro es un alien infiltrado?</p>
+                <ul class="quiz-list">
+                    <li>A) Si ladra en código Morse.</li>
+                    <li>B) Si toma agua en espiral antihoraria.</li>
+                    <li>C) Si te observa evaluando tu rendimiento.</li>
+                    <li>D) Si nunca pierde una pelota… nunca.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 2 -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">C) Te está evaluando</h2>
+            <p>"Los aliens disfrazados de perros tienen la tarea de evaluar el nivel de ternura de los humanos para determinar si somos adoptables como mascotas."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 3 (TRIÁNGULO DE LAS BERMUDAS) - NUEVA -->
+    <div class="slide">
+        <h2>03. Geografía Misteriosa</h2>
+        <div class="two-columns">
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué el Triángulo de las Bermudas se “traga” cosas?</p>
+                <ul class="quiz-list">
+                    <li>A) Porque está a dieta líquida.</li>
+                    <li>B) Porque es un portal mal calibrado.</li>
+                    <li>C) Porque está aburrido.</li>
+                    <li>D) Porque los barcos no saben decir “no”.</li>
+                </ul>
+            </div>
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/f43f5e?text=Tri%C3%A1ngulo+Bermudas&font=roboto" alt="Triángulo Bermudas">
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 3 - NUEVA -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">B) Portal mal calibrado</h2>
+            <p>"Es un portal que se calibró en Windows Vista y nunca volvió a funcionar bien. Se congela y las cosas desaparecen."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 4 (CALCETINES) -->
+    <div class="slide">
+        <h2>04. El Misterio de los Calcetines</h2>
+        <div class="two-columns">
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/2dd4bf?text=Portal+Calcetines&font=roboto" alt="Calcetines">
+            </div>
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿A dónde van los calcetines que se pierden en la lavadora?</p>
+                <ul class="quiz-list">
+                    <li>A) A una dimensión paralela.</li>
+                    <li>B) A un sindicato secreto de prendas.</li>
+                    <li>C) Renuncian a su vida de calcetín.</li>
+                    <li>D) Se transforman en tuppers sin tapa.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 4 -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">D) Se vuelven tuppers</h2>
+            <p>"La ley de conservación de objetos domésticos dicta que cada calcetín perdido se convierte automáticamente en un tupper tapafóbico (sin tapa)."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 5 (WIFI) - NUEVA -->
+    <div class="slide">
+        <h2>05. Conectividad Emocional</h2>
+        <div class="two-columns">
+             <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué el WiFi solo falla en momentos críticos?</p>
+                <ul class="quiz-list">
+                    <li>A) Porque detecta tu angustia.</li>
+                    <li>B) Porque le gustan las bromas pesadas.</li>
+                    <li>C) Porque se alimenta de tus nervios.</li>
+                    <li>D) Porque está programado por el universo.</li>
+                </ul>
+            </div>
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/a78bfa?text=Router+Malvado&font=roboto" alt="Router WiFi">
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 5 - NUEVA -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">C) Se alimenta de nervios</h2>
+            <p>"El WiFi es un ser emocional, y tu estrés le proporciona energía caótica premium. Cuanto más prisa tienes, más sabroso eres para él."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 6 (CUIDADO) -->
+
+    <div class="slide">
+        <h2>07. Leyes de la Física</h2>
+        <div class="two-columns">
+             
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué los objetos siempre se caen justo cuando dices esta frase?</p>
+                <ul class="quiz-list">
+                    <li>A) Porque la frase activa un hechizo de torpeza.</li>
+                    <li>B) Porque el universo es bromista.</li>
+                    <li>C) Porque la gravedad está aburrida.</li>
+                </ul>
+            </div>
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/f472b6?text=Arepa+Deliciosa&font=roboto" alt="Arepa">
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 6 -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">A) Hechizo de torpeza</h2>
+            <p>"La palabra 'cuidado' es un comando universal de la Matrix que provoca autodestrucción leve en el sistema motriz humano."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 7 (AREPAS) -->
+    <div class="slide">
+        <h2>07. El Dilema de la Arepa</h2>
+        <div class="two-columns">
+             <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/f472b6?text=Arepa+Deliciosa&font=roboto" alt="Arepa">
+            </div>
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué la arepa es venezolana y no colombiana?</p>
+                <ul class="quiz-list">
+                    <li>A) Porque lo decidió un comité de abuelas.</li>
+                    <li>B) Porque la arepa eligió su nacionalidad.</li>
+                    <li>C) Porque el maíz habló.</li>
+                    <li>D) Porque nadie discutió con el inventor.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 7 -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">B) La arepa eligió</h2>
+            <p>"Las arepas, en su proceso de cocción, adquieren conciencia temporal y seleccionan su propio pasaporte, ignorando fronteras geopolíticas."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 8 (MICROONDAS) - NUEVA -->
+    <div class="slide">
+        <h2>08. Acústica de Cocina</h2>
+        <div class="two-columns">
+             <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué el microondas hace más ruido cuando faltan cinco segundos?</p>
+                <ul class="quiz-list">
+                    <li>A) Está calentando el dramatismo.</li>
+                    <li>B) Quiere recordarte su existencia.</li>
+                    <li>C) Entra en modo concierto.</li>
+                    <li>D) Marca su victoria contra la comida fría.</li>
+                </ul>
+            </div>
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/fbbf24?text=Microondas+Ruidoso&font=roboto" alt="Microondas">
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 8 - NUEVA -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">D) Marca su victoria</h2>
+            <p>"Los microondas celebran internamente cada triunfo culinario con un tamborcito invisible justo antes de terminar. ¡BIP BIP BIP!"</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 9 (PAPAS) -->
+    <div class="slide">
+        <h2>09. La Ley del Snack</h2>
+        <div class="two-columns">
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/2dd4bf?text=Bolsa+Papas&font=roboto" alt="Papas">
+            </div>
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué las papas fritas siempre dejan la última más rica?</p>
+                <ul class="quiz-list">
+                    <li>A) Para generar nostalgia.</li>
+                    <li>B) Para que termines con esperanza.</li>
+                    <li>C) Porque es la papa líder.</li>
+                    <li>D) Porque así lo dicta la ley del snack.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 9 -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">D) Ley del snack</h2>
+            <p>"El Consejo Mundial de Frituras dicta que cada paquete debe contener una papa premium de despedida para asegurar que compres otro."</p>
+        </div>
+    </div>
+
+    <!-- PREGUNTA 9 (PAPAS) -->
+    <div class="slide">
+        <h2>09. La Ley del Snack</h2>
+        <div class="two-columns">
+            <div class="img-box">
+                <img src="https://placehold.co/800x600/1e293b/2dd4bf?text=Bolsa+Papas&font=roboto" alt="Papas">
+            </div>
+            <div>
+                <p style="font-size: 1.6rem; margin-bottom: 20px;">¿Por qué las papas fritas siempre dejan la última más rica?</p>
+                <ul class="quiz-list">
+                    <li>A) Para generar nostalgia.</li>
+                    <li>B) Para que termines con esperanza.</li>
+                    <li>C) Porque es la papa líder.</li>
+                    <li>D) Porque así lo dicta la ley del snack.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- RESPUESTA 9 -->
+    <div class="slide">
+        <div class="answer-box">
+            <span class="answer-label">Respuesta Correcta</span>
+            <h2 style="color: #f0fdf4;">D) Ley del snack</h2>
+            <p>"El Consejo Mundial de Frituras dicta que cada paquete debe contener una papa premium de despedida para asegurar que compres otro."</p>
+        </div>
+    </div>
+
+    <!-- FIN -->
+    <div class="slide">
+        <h2 style="font-size: 4rem;">Fin de la Presentación</h2>
+        <p style="margin-top: 30px;">¿Dudas? Consulta a tu gato (probablemente lo sabe todo).</p>
+        <br><br>
+        <p style="font-size: 1rem; color: #64748b;">Presiona F11 para pantalla completa</p>
+    </div>
+
+</div>
+
+<script>
+    let currentSlideIndex = 0;
+    const slides = document.querySelectorAll('.slide');
+    const totalSlidesSpan = document.getElementById('totalSlides');
+    const currentSlideSpan = document.getElementById('currentSlide');
+
+    // Inicializar contador
+    totalSlidesSpan.textContent = slides.length;
+
+    function showSlide(index) {
+        // Validar límites
+        if (index < 0) index = 0;
+        if (index >= slides.length) index = slides.length - 1;
+
+        currentSlideIndex = index;
+
+        // Ocultar todas
+        slides.forEach(slide => {
+            slide.classList.remove('active');
+        });
+
+        // Mostrar actual
+        slides[currentSlideIndex].classList.add('active');
+
+        // Actualizar contador
+        currentSlideSpan.textContent = currentSlideIndex + 1;
+    }
+
+    function nextSlide() {
+        showSlide(currentSlideIndex + 1);
+    }
+
+    function prevSlide() {
+        showSlide(currentSlideIndex - 1);
+    }
+
+    // Teclado
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === ' ') {
+            nextSlide();
+        }
+        if (e.key === 'ArrowLeft') {
+            prevSlide();
+        }
+    });
+</script>
+
+</body>
+</html>
