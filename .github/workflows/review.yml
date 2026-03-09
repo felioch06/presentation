@@ -1,4 +1,4 @@
-name: AI PR Review con Gemini
+name: Gemini AI Code Review
 
 on:
   pull_request:
@@ -14,16 +14,20 @@ jobs:
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Gemini Code Review
-        # Usaremos una acción popular compatible con Google AI
-        uses: google-gemini/gemini-github-action@v1
+        # Esta es una versión funcional y mantenida
+        uses: coderabbitai/ai-pr-reviewer@v1.11
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Puedes personalizar el modelo, por ejemplo gemini-1.5-flash (más rápido/barato)
-          model: 'gemini-1.5-flash'
-          # Instrucciones específicas en español
-          system_instruction: "Eres un revisor de código experto. Revisa el diff del PR, encuentra errores y sugiere mejoras en español."
+          debug: false
+          # Aquí especificamos que use Gemini
+          provider: google
+          model: gemini-1.5-flash
+          language: es-ES
+          system_message: |
+            Eres un revisor de código experto. 
+            Responde siempre en español.
+            Enfócate en errores lógicos y seguridad.
