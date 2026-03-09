@@ -13,87 +13,114 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get changed files
-        id: files
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get PR diff
+        id: diff
         run: |
+          echo "Fetching PR diff..."
+
           curl -s \
             -H "Authorization: Bearer ${{ github.token }}" \
-            "${{ github.event.pull_request.url }}/files" \
-            > files.json
+            -H "Accept: application/vnd.github.v3.diff" \
+            ${{ github.event.pull_request.url }} \
+            > pr.diff
 
-          jq -r '.[].patch' files.json > diff.txt
+          echo "Diff size:"
+          wc -c pr.diff
 
-      - name: Ask Gemini for review
-        id: ai
+          # limitar tamaño para evitar errores con Gemini
+          head -c 12000 pr.diff > pr_trimmed.diff
+
+      - name: Ask Gemini for code review
+        id: gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
 
-          DIFF=$(head -c 15000 diff.txt)
+          DIFF=$(cat pr_trimmed.diff)
 
           PROMPT=$(cat <<EOF
-          Actúa como un Senior Software Engineer haciendo code review.
+Eres un Senior Software Engineer realizando un code review.
 
-          Analiza el siguiente diff de un Pull Request.
+Analiza el siguiente diff de un Pull Request.
 
-          Responde SIEMPRE en español.
+Responde SIEMPRE en español y usa Markdown.
 
-          Estructura tu respuesta en Markdown:
+Estructura:
 
-          ## Resumen del PR
+## Resumen del PR
 
-          ## Problemas detectados
-          - bugs
-          - edge cases
-          - errores potenciales
+## Problemas detectados
+- Bugs potenciales
+- Edge cases
 
-          ## Problemas de seguridad
+## Seguridad
+- Vulnerabilidades
+- Validaciones faltantes
 
-          ## Problemas de performance
+## Performance
 
-          ## Mejoras recomendadas
-          - clean code
-          - refactoring
-          - buenas prácticas
+## Mejoras recomendadas
+- Refactor
+- Clean code
+- Buenas prácticas
 
-          ## Score del PR
-          Puntúa del 1 al 10 y explica por qué.
+## Score del PR
+Da una puntuación del 1 al 10 y explica brevemente.
 
-          Diff del PR:
+Diff del PR:
 
-          $DIFF
-          EOF
-          )
+$DIFF
+EOF
+)
+
+          echo "Sending request to Gemini..."
 
           RESPONSE=$(curl -s \
             -H "Content-Type: application/json" \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY" \
             -d "$(jq -n --arg prompt "$PROMPT" '{contents:[{parts:[{text:$prompt}]}]}')")
 
-          COMMENT=$(echo $RESPONSE | jq -r '.candidates[0].content.parts[0].text')
+          echo "Gemini raw response:"
+          echo "$RESPONSE"
+
+          COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
+
+          if [ -z "$COMMENT" ]; then
+            COMMENT="⚠️ No se pudo generar el review automático del PR.
+
+Posibles causas:
+- API key inválida
+- Límite de cuota de Gemini
+- Diff demasiado grande
+- Error en la respuesta de la API."
+          fi
 
           echo "COMMENT<<EOF" >> $GITHUB_ENV
           echo "$COMMENT" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Comment PR
+      - name: Comment PR with review
         uses: actions/github-script@v7
         with:
           script: |
-            const comment = `
-            ## 🤖 AI Code Review
+            const body = `
+## 🤖 AI Code Review
 
-            ${process.env.COMMENT}
+${process.env.COMMENT}
 
-            ---
-            _Review generado automáticamente con Gemini_
-            `
+---
+Review generado automáticamente con Gemini
+`
 
             await github.rest.issues.createComment({
-              ...context.repo,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: comment
+              body
             })
