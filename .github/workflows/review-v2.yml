@@ -3,12 +3,13 @@ name: AI PR Review
 on:
   pull_request:
     types: [opened, synchronize]
-    paths:
-      - '**.js'
-      - '**.ts'
-      - '**.liquid'  # Añadido: Archivos de Shopify
-      - '**.css'     # Añadido: Estilos
-      - '**.scss'    # Opcional: Sass
+    # Evita disparar el review en archivos que no aportan valor
+    paths-ignore:
+      - '**.md'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'assets/**.png'
+      - 'assets/**.jpg'
 
 permissions:
   contents: read
@@ -21,89 +22,82 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
-    if: "!contains(github.event.pull_request.title, '[skip ai]')"
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Necesario para comparar diffs correctamente
 
-      - name: Get changed files from PR
+      - name: Get Diff
+        id: diff
         run: |
-          curl -s \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            ${{ github.api_url }}/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
-            > files.json
+          # Obtenemos el diff directamente de git, filtrando archivos pesados o irrelevantes
+          # Incluimos .liquid y .css específicamente
+          git diff origin/${{ github.base_ref }}...origin/${{ github.head_ref }} \
+            -- . ':(exclude)*.json' ':(exclude)*.map' ':(exclude)dist/*' > pr.diff
+          
+          # Si el diff es demasiado grande, lo truncamos para no exceder la ventana de contexto
+          head -c 50000 pr.diff > pr_trimmed.diff
+          echo "diff_exists=$([ -s pr_trimmed.diff ] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
 
-      - name: Build filtered diff
-        run: |
-          # Filtramos archivos basura y limitamos a 50k caracteres
-          jq -r '
-          .[]
-          | select(.patch != null)
-          | select(.filename | test("package-lock|dist|build|node_modules|\\.snap|\\.min\\.js|\\.map") | not)
-          | "File: " + .filename + "\n" + .patch + "\n"
-          ' files.json | head -c 50000 > pr_trimmed.diff
-
-      - name: Send diff to Gemini
+      - name: Send to Gemini
+        if: steps.diff.outputs.diff_exists == 'true'
         id: gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          sleep 2
-          DIFF=$(cat pr_trimmed.diff)
+          DIFF_CONTENT=$(cat pr_trimmed.diff)
           
-          if [ -z "$DIFF" ]; then
-            echo "COMMENT=No hay cambios significativos en código, Liquid o CSS para revisar." >> $GITHUB_ENV
-            exit 0
-          fi
-
-          # Ajustamos el prompt para darle contexto de Shopify/Web
-          PROMPT="Eres un Senior Fullstack Engineer experto en Shopify (Liquid) y Frontend. 
-          Analiza este PR y responde en español.
-          Si hay archivos .liquid, revisa lógica de filtros, objetos de Shopify y rendimiento.
-          Si hay CSS, revisa especificidad y posibles bugs visuales.
-
-          Estructura:
-          ## Resumen del PR
-          ## Problemas detectados (explicación y código corregido)
-          ## Seguridad y Performance
-          ## Score: X/10 (solo el número)
+          # Prompt mejorado y más específico
+          PROMPT="Eres un Senior Software Engineer experto en Web Development y Shopify (Liquid/CSS).
+          Analiza este diff de un PR y responde en ESPAÑOL.
+          
+          REGLAS:
+          1. Sé crítico pero constructivo.
+          2. En Liquid, busca redundancias de código o lógica que pueda afectar la carga.
+          3. En CSS/SCSS, busca selectores demasiado específicos o falta de variables.
+          4. Si el código es excelente, felicita al autor.
+          
+          ESTRUCTURA DE RESPUESTA:
+          ## 📝 Resumen
+          ## 🛠️ Problemas y Mejoras (incluye snippets corregidos)
+          ## 🔒 Seguridad y Performance
+          ## ⭐ Score: [número del 1 al 10]
           
           Diff:
-          $DIFF"
+          $DIFF_CONTENT"
 
-          JSON=$(jq -n --arg prompt "$PROMPT" '{contents:[{parts:[{text:$prompt}]}]}')
+          # Uso de jq para construir el JSON de forma segura (evita errores de escape)
+          jq -n --arg msg "$PROMPT" '{contents: [{parts: [{text: $msg}]}]}' > payload.json
 
           RESPONSE=$(curl -s -X POST \
             -H "Content-Type: application/json" \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY" \
-            -d "$JSON")
+            -d @payload.json)
 
-          COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' 2>/dev/null || echo "⚠️ Error: API saturada o respuesta inválida.")
-
-          echo "COMMENT<<EOF" >> $GITHUB_ENV
-          echo "$COMMENT" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Extract Score
-        run: |
-          # Buscamos la línea que dice Score y extraemos el primer número que aparezca
-          SCORE=$(echo "$COMMENT" | grep -i "Score" | sed 's/[^0-9]*//g' | cut -c1-2)
+          # Extraer el texto de forma segura
+          COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // "Error: No se pudo generar el review."')
           
-          # Validamos que sea un número entre 1 y 10, si no, default a 10
-          if [[ ! "$SCORE" =~ ^[0-9]+$ ]] || [ "$SCORE" -gt 10 ]; then
-            SCORE=10
-          fi
-          
-          echo "SCORE=$SCORE" >> $GITHUB_ENV
+          # Guardar en un archivo temporal para evitar problemas de caracteres especiales en ENV
+          echo "$COMMENT" > comment.md
 
-      - name: Comment or update PR review
+      - name: Extract Score and Post Comment
+        if: steps.diff.outputs.diff_exists == 'true'
         uses: actions/github-script@v7
+        env:
+          COMMENT_FILE: 'comment.md'
         with:
           script: |
-            const score = parseInt(process.env.SCORE);
-            let emoji = score < 5 ? "🔴" : score < 8 ? "🟡" : "🟢";
-            const body = `## 🤖 AI Code Review ${emoji}\n\n**Score:** ${score}/10\n\n${process.env.COMMENT}\n\n---\n_Review enfocado en Web & Shopify_`;
+            const fs = require('fs');
+            const commentBody = fs.readFileSync(process.env.COMMENT_FILE, 'utf8');
+            
+            // Extraer score con Regex
+            const scoreMatch = commentBody.match(/Score:\s*(\d+)/i);
+            const score = scoreMatch ? parseInt(scoreMatch[1]) : 10;
+            
+            let emoji = score >= 8 ? "🟢" : (score >= 5 ? "🟡" : "🔴");
+            
+            const finalBody = `## 🤖 AI Code Review ${emoji}\n\n${commentBody}\n\n---\n*Generado por Gemini 1.5 Flash*`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -115,12 +109,20 @@ jobs:
 
             if (botComment) {
               await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                comment_id: botComment.id, body
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: finalBody
               });
             } else {
               await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: context.issue.number, body
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: finalBody
               });
+            }
+
+            if (score < 5) {
+              core.setFailed(`PR bloqueado: Score de ${score}/10 es insuficiente.`);
             }
