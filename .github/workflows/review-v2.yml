@@ -1,4 +1,4 @@
-name: AI PR Review
+name: AI PR Review PRO
 
 on:
   pull_request:
@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -28,71 +27,52 @@ jobs:
             ${{ github.api_url }}/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
             > files.json
 
-      - name: Filter relevant code files
+      - name: Filter relevant files
         run: |
-
-          mkdir diffs
-
           jq -r '
           .[]
           | select(.patch != null)
           | select(.patch | length > 80)
-
           | select(.filename | test("node_modules|dist|build|coverage|\\.lock|\\.snap|\\.map|\\.min\\.js") | not)
-
           | select(.filename | test("\\.(ts|tsx|js|jsx|py|go|java|rs|cs|cpp|c|kt|swift)$"))
-
-          | .filename + "|||SPLIT|||" + .patch
-          ' files.json > files_filtered.txt
+          | .filename + "|||SPLIT|||" + (.patch | split("\n")[:250] | join("\n"))
+          ' files.json > filtered.txt
 
       - name: Stop if nothing to review
         run: |
-
-          if [ ! -s files_filtered.txt ]; then
+          if [ ! -s filtered.txt ]; then
             echo "No relevant code changes"
             exit 0
           fi
 
-      - name: Build AI batches
+      - name: Build batches
         run: |
-
           mkdir batches
-
-          BATCH_SIZE=4
-          BATCH_INDEX=0
+          BATCH=0
           COUNT=0
           CURRENT=""
 
           while IFS='|||SPLIT|||' read -r FILE PATCH
           do
-
-            PATCH_TRIM=$(echo "$PATCH" | head -n 250)
-
-            CURRENT="${CURRENT}\n\nFile: $FILE\n$PATCH_TRIM"
-
+            CURRENT="${CURRENT}\n\nFile: $FILE\n$PATCH"
             COUNT=$((COUNT + 1))
 
-            if [ "$COUNT" -ge "$BATCH_SIZE" ]; then
-
-              echo "$CURRENT" > batches/batch_$BATCH_INDEX.txt
-
-              BATCH_INDEX=$((BATCH_INDEX + 1))
+            if [ "$COUNT" -ge 4 ]; then
+              echo "$CURRENT" > batches/batch_$BATCH.txt
+              BATCH=$((BATCH + 1))
               COUNT=0
               CURRENT=""
-
             fi
-
-          done < files_filtered.txt
+          done < filtered.txt
 
           if [ ! -z "$CURRENT" ]; then
-            echo "$CURRENT" > batches/batch_$BATCH_INDEX.txt
+            echo "$CURRENT" > batches/batch_$BATCH.txt
           fi
 
-      - name: Run AI reviews in parallel
+      - name: Run Gemini in parallel
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-
           mkdir results
 
           for file in batches/*.txt
@@ -102,27 +82,28 @@ jobs:
 
             PROMPT="Eres un Senior Software Engineer haciendo code review.
 
-            Analiza los siguientes cambios.
+            Analiza los siguientes cambios de un PR.
             
             $CONTENT
             
-            Detecta:
-            - bugs
-            - problemas de seguridad
-            - performance
-            - malas prácticas
+            Reglas:
+            - No inventes problemas.
+            - Sé conciso.
+            - Si no hay problemas, dilo.
             
-            Responde en Markdown.
+            Responde SOLO en JSON válido:
             
-            Estructura:
-            
-            Problemas detectados
-            Seguridad
-            Performance
-            Mejoras recomendadas
-            
-            Score:
-            Score: número entre 1 y 10
+            {
+              \"summary\": \"breve resumen\",
+              \"issues\": [
+                {
+                  \"file\": \"ruta\",
+                  \"line\": numero,
+                  \"comment\": \"explicación breve\"
+                }
+              ],
+              \"score\": numero
+            }
             "
 
             JSON=$(jq -n --arg prompt "$PROMPT" \
@@ -132,37 +113,41 @@ jobs:
               -H "Content-Type: application/json" \
               "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_API_KEY" \
               -d "$JSON" \
-              | jq -r '.candidates[0].content.parts[0].text' \
-              > results/$(basename "$file").md
+              | jq -r '.candidates[0].content.parts[0].text // empty' \
+              > results/$(basename "$file").json
 
           ) &
           done
 
           wait
 
-      - name: Combine results
+      - name: Combine AI results
         run: |
-
-          echo "" > review.md
-
           TOTAL=0
           COUNT=0
+          echo "" > review.md
+          echo "[]" > issues.json
 
-          for file in results/*.md
+          for f in results/*.json
           do
+            if [ ! -s "$f" ]; then
+              continue
+            fi
 
-            cat "$file" >> review.md
-            echo "" >> review.md
+            SUMMARY=$(jq -r '.summary // empty' "$f")
+            SCORE=$(jq -r '.score // 10' "$f")
 
-            SCORE=$(grep -oE 'Score[: ]+[0-9]+' "$file" | grep -oE '[0-9]+' | head -1)
-
-            if [ -z "$SCORE" ]; then
-              SCORE=10
+            if [ ! -z "$SUMMARY" ]; then
+              echo "### Batch review" >> review.md
+              echo "$SUMMARY" >> review.md
+              echo "" >> review.md
             fi
 
             TOTAL=$((TOTAL + SCORE))
             COUNT=$((COUNT + 1))
 
+            jq -s '.[0] + .[1].issues' issues.json "$f" > tmp.json
+            mv tmp.json issues.json
           done
 
           if [ "$COUNT" -eq 0 ]; then
@@ -181,11 +166,10 @@ jobs:
           echo "Score: $FINAL_SCORE / 10" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Comment PR
+      - name: Comment summary
         uses: actions/github-script@v7
         with:
           script: |
-
             const score = parseInt(process.env.FINAL_SCORE)
 
             let emoji = "🟢"
@@ -198,7 +182,7 @@ jobs:
             ${process.env.COMMENT}
 
             ---
-            Review generado automáticamente
+            Generated automatically
             `
 
             const { data: comments } = await github.rest.issues.listComments({
@@ -207,36 +191,61 @@ jobs:
               issue_number: context.issue.number
             })
 
-            const botComment = comments.find(comment =>
-              comment.body.includes("🤖 AI Code Review")
+            const botComment = comments.find(c =>
+              c.body.includes("🤖 AI Code Review")
             )
 
             if (botComment) {
-
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: botComment.id,
                 body
               })
-
             } else {
-
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
                 body
               })
-
             }
 
-      - name: Block PR if score too low
-        run: |
+      - name: Create inline comments
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
 
+            if (!fs.existsSync("issues.json")) return
+
+            const issues = JSON.parse(fs.readFileSync("issues.json"))
+
+            for (const issue of issues) {
+
+              if (!issue.file || !issue.line) continue
+
+              try {
+                await github.rest.pulls.createReviewComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.issue.number,
+                  body: issue.comment,
+                  commit_id: context.payload.pull_request.head.sha,
+                  path: issue.file,
+                  line: issue.line,
+                  side: "RIGHT"
+                })
+              } catch(e) {
+                console.log("Failed comment", e.message)
+              }
+            }
+
+      - name: Block PR if score low
+        run: |
           echo "Score final: $FINAL_SCORE"
 
           if [ "$FINAL_SCORE" -lt 5 ]; then
-            echo "❌ PR bloqueado por baja calidad"
+            echo "❌ PR bloqueado"
             exit 1
           fi
