@@ -511,7 +511,7 @@
     const currentSlideSpan = document.getElementById('currentSlide');
 
     // Inicializar contador
-    totalSlidesSpan.textContent = slides.length;
+    totalSlidesSpan.textContent = slides?.length || 0;
 
     function showSlide(index) {
         // Validar límites
