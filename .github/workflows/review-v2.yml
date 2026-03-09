@@ -1,8 +1,14 @@
-name: AI PR Review PRO
+name: AI PR Review
 
 on:
   pull_request:
     types: [opened, synchronize]
+    paths:
+      - '**.js'
+      - '**.ts'
+      - '**.liquid'  # Añadido: Archivos de Shopify
+      - '**.css'     # Añadido: Estilos
+      - '**.scss'    # Opcional: Sass
 
 permissions:
   contents: read
@@ -15,237 +21,106 @@ concurrency:
 jobs:
   review:
     runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.title, '[skip ai]')"
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Get PR files
+      - name: Get changed files from PR
         run: |
           curl -s \
             -H "Authorization: Bearer ${{ github.token }}" \
             ${{ github.api_url }}/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
             > files.json
 
-      - name: Filter relevant files
+      - name: Build filtered diff
         run: |
+          # Filtramos archivos basura y limitamos a 50k caracteres
           jq -r '
           .[]
           | select(.patch != null)
-          | select(.patch | length > 80)
-          | select(.filename | test("node_modules|dist|build|coverage|\\.lock|\\.snap|\\.map|\\.min\\.js") | not)
-          | select(.filename | test("\\.(ts|tsx|js|jsx|py|go|java|rs|cs|cpp|c|kt|swift)$"))
-          | .filename + "|||SPLIT|||" + (.patch | split("\n")[:250] | join("\n"))
-          ' files.json > filtered.txt
+          | select(.filename | test("package-lock|dist|build|node_modules|\\.snap|\\.min\\.js|\\.map") | not)
+          | "File: " + .filename + "\n" + .patch + "\n"
+          ' files.json | head -c 50000 > pr_trimmed.diff
 
-      - name: Stop if nothing to review
-        run: |
-          if [ ! -s filtered.txt ]; then
-            echo "No relevant code changes"
-            exit 0
-          fi
-
-      - name: Build batches
-        run: |
-          mkdir batches
-          BATCH=0
-          COUNT=0
-          CURRENT=""
-
-          while IFS='|||SPLIT|||' read -r FILE PATCH
-          do
-            CURRENT="${CURRENT}\n\nFile: $FILE\n$PATCH"
-            COUNT=$((COUNT + 1))
-
-            if [ "$COUNT" -ge 4 ]; then
-              echo "$CURRENT" > batches/batch_$BATCH.txt
-              BATCH=$((BATCH + 1))
-              COUNT=0
-              CURRENT=""
-            fi
-          done < filtered.txt
-
-          if [ ! -z "$CURRENT" ]; then
-            echo "$CURRENT" > batches/batch_$BATCH.txt
-          fi
-
-      - name: Run Gemini in parallel
+      - name: Send diff to Gemini
+        id: gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          mkdir results
-
-          for file in batches/*.txt
-          do
-          (
-            CONTENT=$(cat "$file")
-
-            PROMPT="Eres un Senior Software Engineer haciendo code review.
-
-            Analiza los siguientes cambios de un PR.
-            
-            $CONTENT
-            
-            Reglas:
-            - No inventes problemas.
-            - Sé conciso.
-            - Si no hay problemas, dilo.
-            
-            Responde SOLO en JSON válido:
-            
-            {
-              \"summary\": \"breve resumen\",
-              \"issues\": [
-                {
-                  \"file\": \"ruta\",
-                  \"line\": numero,
-                  \"comment\": \"explicación breve\"
-                }
-              ],
-              \"score\": numero
-            }
-            "
-
-            JSON=$(jq -n --arg prompt "$PROMPT" \
-            '{contents:[{parts:[{text:$prompt}]}]}')
-
-            curl -s \
-              -H "Content-Type: application/json" \
-              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_API_KEY" \
-              -d "$JSON" \
-              | jq -r '.candidates[0].content.parts[0].text // empty' \
-              > results/$(basename "$file").json
-
-          ) &
-          done
-
-          wait
-
-      - name: Combine AI results
-        run: |
-          TOTAL=0
-          COUNT=0
-          echo "" > review.md
-          echo "[]" > issues.json
-
-          for f in results/*.json
-          do
-            if [ ! -s "$f" ]; then
-              continue
-            fi
-
-            SUMMARY=$(jq -r '.summary // empty' "$f")
-            SCORE=$(jq -r '.score // 10' "$f")
-
-            if [ ! -z "$SUMMARY" ]; then
-              echo "### Batch review" >> review.md
-              echo "$SUMMARY" >> review.md
-              echo "" >> review.md
-            fi
-
-            TOTAL=$((TOTAL + SCORE))
-            COUNT=$((COUNT + 1))
-
-            jq -s '.[0] + .[1].issues' issues.json "$f" > tmp.json
-            mv tmp.json issues.json
-          done
-
-          if [ "$COUNT" -eq 0 ]; then
-            FINAL_SCORE=10
-          else
-            FINAL_SCORE=$((TOTAL / COUNT))
+          sleep 2
+          DIFF=$(cat pr_trimmed.diff)
+          
+          if [ -z "$DIFF" ]; then
+            echo "COMMENT=No hay cambios significativos en código, Liquid o CSS para revisar." >> $GITHUB_ENV
+            exit 0
           fi
 
-          echo "FINAL_SCORE=$FINAL_SCORE" >> $GITHUB_ENV
+          # Ajustamos el prompt para darle contexto de Shopify/Web
+          PROMPT="Eres un Senior Fullstack Engineer experto en Shopify (Liquid) y Frontend. 
+          Analiza este PR y responde en español.
+          Si hay archivos .liquid, revisa lógica de filtros, objetos de Shopify y rendimiento.
+          Si hay CSS, revisa especificidad y posibles bugs visuales.
+
+          Estructura:
+          ## Resumen del PR
+          ## Problemas detectados (explicación y código corregido)
+          ## Seguridad y Performance
+          ## Score: X/10 (solo el número)
+          
+          Diff:
+          $DIFF"
+
+          JSON=$(jq -n --arg prompt "$PROMPT" '{contents:[{parts:[{text:$prompt}]}]}')
+
+          RESPONSE=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY" \
+            -d "$JSON")
+
+          COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text' 2>/dev/null || echo "⚠️ Error: API saturada o respuesta inválida.")
 
           echo "COMMENT<<EOF" >> $GITHUB_ENV
-          echo "## 🤖 AI Code Review" >> $GITHUB_ENV
-          cat review.md >> $GITHUB_ENV
-          echo "" >> $GITHUB_ENV
-          echo "## Score final" >> $GITHUB_ENV
-          echo "Score: $FINAL_SCORE / 10" >> $GITHUB_ENV
+          echo "$COMMENT" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Comment summary
+      - name: Extract Score
+        run: |
+          # Buscamos la línea que dice Score y extraemos el primer número que aparezca
+          SCORE=$(echo "$COMMENT" | grep -i "Score" | sed 's/[^0-9]*//g' | cut -c1-2)
+          
+          # Validamos que sea un número entre 1 y 10, si no, default a 10
+          if [[ ! "$SCORE" =~ ^[0-9]+$ ]] || [ "$SCORE" -gt 10 ]; then
+            SCORE=10
+          fi
+          
+          echo "SCORE=$SCORE" >> $GITHUB_ENV
+
+      - name: Comment or update PR review
         uses: actions/github-script@v7
         with:
           script: |
-            const score = parseInt(process.env.FINAL_SCORE)
-
-            let emoji = "🟢"
-            if (score < 5) emoji = "🔴"
-            else if (score < 8) emoji = "🟡"
-
-            const body = `
-            ## 🤖 AI Code Review ${emoji}
-
-            ${process.env.COMMENT}
-
-            ---
-            Generated automatically
-            `
+            const score = parseInt(process.env.SCORE);
+            let emoji = score < 5 ? "🔴" : score < 8 ? "🟡" : "🟢";
+            const body = `## 🤖 AI Code Review ${emoji}\n\n**Score:** ${score}/10\n\n${process.env.COMMENT}\n\n---\n_Review enfocado en Web & Shopify_`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number
-            })
+            });
 
-            const botComment = comments.find(c =>
-              c.body.includes("🤖 AI Code Review")
-            )
+            const botComment = comments.find(c => c.body.includes("🤖 AI Code Review"));
 
             if (botComment) {
               await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body
-              })
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: botComment.id, body
+              });
             } else {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body
-              })
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body
+              });
             }
-
-      - name: Create inline comments
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs')
-
-            if (!fs.existsSync("issues.json")) return
-
-            const issues = JSON.parse(fs.readFileSync("issues.json"))
-
-            for (const issue of issues) {
-
-              if (!issue.file || !issue.line) continue
-
-              try {
-                await github.rest.pulls.createReviewComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  pull_number: context.issue.number,
-                  body: issue.comment,
-                  commit_id: context.payload.pull_request.head.sha,
-                  path: issue.file,
-                  line: issue.line,
-                  side: "RIGHT"
-                })
-              } catch(e) {
-                console.log("Failed comment", e.message)
-              }
-            }
-
-      - name: Block PR if score low
-        run: |
-          echo "Score final: $FINAL_SCORE"
-
-          if [ "$FINAL_SCORE" -lt 5 ]; then
-            echo "❌ PR bloqueado"
-            exit 1
-          fi
