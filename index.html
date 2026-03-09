@@ -510,10 +510,12 @@
     const totalSlidesSpan = document.getElementById('totalSlides');
     const currentSlideSpan = document.getElementById('currentSlide');
 
-    const pepe = "HOLA"
+    let isActive = false
+
+    if (slides) { isActive = true }
 
     // Inicializar contador
-    totalSlidesSpan.textContent = slides.length;
+    totalSlidesSpan.textContent = isActive ? slides.length : 0;
 
     function showSlide(index) {
         // Validar límites
@@ -544,7 +546,7 @@
 
     // Teclado
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowRight' || e.key === ' ' || pepe) {
+        if (e.key === 'ArrowRight' || e.key === ' ') {
             nextSlide();
         }
         if (e.key === 'ArrowLeft') {
