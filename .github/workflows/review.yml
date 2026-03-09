@@ -1,4 +1,4 @@
-name: Gemini AI Code Review
+name: Gemini PR Reviewer
 
 on:
   pull_request:
@@ -12,22 +12,20 @@ jobs:
       pull-requests: write
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Gemini Code Review
-        # Esta es una versión funcional y mantenida
-        uses: coderabbitai/ai-pr-reviewer@v1.11
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Gemini AI Review
+        # Esta acción es específica para Gemini y está activa
+        uses: google-gemini/gemini-github-action@main
         with:
-          debug: false
-          # Aquí especificamos que use Gemini
-          provider: google
-          model: gemini-1.5-flash
-          language: es-ES
-          system_message: |
-            Eres un revisor de código experto. 
-            Responde siempre en español.
-            Enfócate en errores lógicos y seguridad.
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          model: "gemini-1.5-flash"
+          # Instrucciones en español para que el review sea útil
+          system_instruction: |
+            Eres un Senior Developer. Tu tarea es revisar el pull request.
+            1. Sé crítico pero constructivo.
+            2. Responde siempre en español.
+            3. Si el código está bien, felicita al autor.
+            4. Si hay errores o mejoras (rendimiento, seguridad), indica la línea exacta.
