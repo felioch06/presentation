@@ -1,4 +1,4 @@
-name: Gemini PR Reviewer
+name: Gemini AI PR Review
 
 on:
   pull_request:
@@ -14,18 +14,47 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-
-      - name: Gemini AI Review
-        # Esta acción es específica para Gemini y está activa
-        uses: google-gemini/gemini-github-action@main
         with:
-          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          model: "gemini-1.5-flash"
-          # Instrucciones en español para que el review sea útil
-          system_instruction: |
-            Eres un Senior Developer. Tu tarea es revisar el pull request.
-            1. Sé crítico pero constructivo.
-            2. Responde siempre en español.
-            3. Si el código está bien, felicita al autor.
-            4. Si hay errores o mejoras (rendimiento, seguridad), indica la línea exacta.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -q -U google-generativeai
+
+      - name: Gemini Review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: python
+        run: |
+          import os
+          import google.generativeai as genai
+          import subprocess
+
+          # Configurar Gemini
+          genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+          model = genai.GenerativeModel('gemini-1.5-flash')
+
+          # Obtener los cambios del PR (diff)
+          diff = subprocess.check_output(['git', 'diff', 'origin/main...HEAD']).decode('utf-8')
+
+          if not diff:
+              print("No hay cambios para revisar.")
+              exit(0)
+
+          # Pedir la revisión a la IA
+          prompt = f"Eres un Senior Developer. Revisa este código y da sugerencias en español sobre errores, seguridad y rendimiento:\n\n{diff}"
+          response = model.generate_content(prompt)
+          review_text = response.text
+
+          # Publicar el comentario en el PR usando la CLI de GitHub (gh)
+          with open("review.txt", "w") as f:
+              f.write(review_text)
+          
+          subprocess.run(['gh', 'pr', 'comment', os.environ["PR_NUMBER"], '--body-file', 'review.txt'], check=True)
