@@ -27,7 +27,7 @@ jobs:
             ${{ github.event.pull_request.url }} > pr.diff
 
           # limit diff size
-          head -c 120000 pr.diff > pr_trimmed.diff
+          head -c 200000 pr.diff > pr_trimmed.diff
 
       - name: Send diff to Gemini
         env:
@@ -41,12 +41,24 @@ jobs:
           Analiza el siguiente diff de un Pull Request.
 
           Responde en español usando Markdown.
+          Si detectas problemas en el código, incluye ejemplos de cómo debería verse la implementación corregida.
+
+          IMPORTANTE:
+          - Solo muestra snippets de código mejorado para las secciones que tengan problemas.
+          - NO reescribas archivos completos.
+          - NO repitas todo el código del PR.
+          - Muestra únicamente los fragmentos relevantes.
+          - Usa bloques de código Markdown con el lenguaje correspondiente
 
           Estructura EXACTA:
 
           ## Resumen del PR
 
           ## Problemas detectados
+          Para cada problema:
+          - Explica el problema
+          - Explica por qué es un problema
+          - Si aplica, muestra una posible implementación corregida
 
           ## Problemas de seguridad
 
