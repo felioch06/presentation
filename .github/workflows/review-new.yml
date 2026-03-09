@@ -1,0 +1,173 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get changed files from PR
+        run: |
+          curl -s \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            ${{ github.api_url }}/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
+            > files.json
+
+      - name: Build filtered diff
+        run: |
+          jq -r '
+          .[]
+          | select(.patch != null)
+          | select(.filename | test("package-lock|dist|build|node_modules|\\.snap") | not)
+          | "File: " + .filename + "\n" + .patch + "\n"
+          ' files.json > pr.diff
+
+          # limit diff size to avoid token overflow
+          head -c 150000 pr.diff > pr_trimmed.diff
+
+      - name: Send diff to Gemini
+        id: gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+
+          DIFF=$(cat pr_trimmed.diff)
+
+          PROMPT="Eres un Senior Software Engineer haciendo code review.
+
+          Analiza el siguiente diff de un Pull Request.
+
+          Responde en español usando Markdown.
+
+          IMPORTANTE:
+          - No inventes problemas si el código está correcto.
+          - Solo muestra snippets de código mejorado para las secciones que tengan problemas.
+          - NO reescribas archivos completos.
+          - NO repitas todo el código del PR.
+          - Muestra únicamente los fragmentos relevantes.
+          - Usa bloques de código Markdown con el lenguaje correspondiente.
+
+          Estructura EXACTA:
+
+          ## Resumen del PR
+
+          ## Problemas detectados
+          Para cada problema:
+          - Explica el problema
+          - Explica por qué es un problema
+          - Si aplica, muestra una posible implementación corregida
+
+          ## Problemas de seguridad
+
+          ## Performance
+
+          ## Mejoras recomendadas
+
+          ## Score
+          Score: numero entre 1 y 10
+
+          Diff:
+          $DIFF"
+
+          JSON=$(jq -n --arg prompt "$PROMPT" \
+          '{contents:[{parts:[{text:$prompt}]}]}')
+
+          RESPONSE=$(curl -s \
+            -H "Content-Type: application/json" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_API_KEY" \
+            -d "$JSON")
+
+          echo "$RESPONSE"
+
+          COMMENT=$(echo "$RESPONSE" | jq -r '
+            .candidates[0].content.parts[0].text
+            // "⚠️ No se pudo generar el review automáticamente."
+          ')
+
+          echo "COMMENT<<EOF" >> $GITHUB_ENV
+          echo "$COMMENT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Extract Score
+        run: |
+
+          SCORE=$(echo "$COMMENT" | grep -oE 'Score[: ]+[0-9]+' | grep -oE '[0-9]+' | head -1)
+
+          if [ -z "$SCORE" ]; then
+            SCORE=10
+          fi
+
+          echo "Score detectado: $SCORE"
+
+          echo "SCORE=$SCORE" >> $GITHUB_ENV
+
+      - name: Comment or update PR review
+        uses: actions/github-script@v7
+        with:
+          script: |
+
+            const score = parseInt(process.env.SCORE)
+
+            let emoji = "🟢"
+            if (score < 5) emoji = "🔴"
+            else if (score < 8) emoji = "🟡"
+
+            const body = `
+            ## 🤖 AI Code Review ${emoji}
+
+            **Score:** ${score}/10
+
+            ${process.env.COMMENT}
+
+            ---
+            Review generado automáticamente con Gemini
+            `
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            })
+
+            const botComment = comments.find(comment =>
+              comment.body.includes("🤖 AI Code Review")
+            )
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              })
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              })
+            }
+
+      - name: Fail if score < 5
+        run: |
+          echo "Score obtenido: $SCORE"
+
+          if [ "$SCORE" -lt 5 ]; then
+            echo "❌ PR bloqueado: Score menor a 5"
+            exit 1
+          fi
