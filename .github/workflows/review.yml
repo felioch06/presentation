@@ -1,4 +1,4 @@
-name: Gemini AI PR Review
+name: AI PR Review
 
 on:
   pull_request:
@@ -7,54 +7,21 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       pull-requests: write
+      issues: write
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Install dependencies
-        run: |
-          pip install -q -U google-generativeai
-
-      - name: Gemini Review
+      - name: Run PR Agent
+        uses: Codium-ai/pr-agent@v0.30
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        shell: python
-        run: |
-          import os
-          import google.generativeai as genai
-          import subprocess
-
-          # Configurar Gemini
-          genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-          model = genai.GenerativeModel('gemini-1.5-flash')
-
-          # Obtener los cambios del PR (diff)
-          diff = subprocess.check_output(['git', 'diff', 'origin/main...HEAD']).decode('utf-8')
-
-          if not diff:
-              print("No hay cambios para revisar.")
-              exit(0)
-
-          # Pedir la revisión a la IA
-          prompt = f"Eres un Senior Developer. Revisa este código y da sugerencias en español sobre errores, seguridad y rendimiento:\n\n{diff}"
-          response = model.generate_content(prompt)
-          review_text = response.text
-
-          # Publicar el comentario en el PR usando la CLI de GitHub (gh)
-          with open("review.txt", "w") as f:
-              f.write(review_text)
-          
-          subprocess.run(['gh', 'pr', 'comment', os.environ["PR_NUMBER"], '--body-file', 'review.txt'], check=True)
+          GITHUB_CONTEXT: ${{ toJson(github) }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          PR_AGENT.MODEL: gemini-1.5-pro-latest
