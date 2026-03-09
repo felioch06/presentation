@@ -20,103 +20,65 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Get PR diff
-        id: diff
         run: |
-          echo "Fetching PR diff..."
-
           curl -s \
             -H "Authorization: Bearer ${{ github.token }}" \
             -H "Accept: application/vnd.github.v3.diff" \
-            ${{ github.event.pull_request.url }} \
-            > pr.diff
+            ${{ github.event.pull_request.url }} > pr.diff
 
-          echo "Diff size:"
-          wc -c pr.diff
+          head -c 10000 pr.diff > pr_trimmed.diff
 
-          # limitar tamaño para evitar errores con Gemini
-          head -c 12000 pr.diff > pr_trimmed.diff
-
-      - name: Ask Gemini for code review
-        id: gemini
+      - name: Send diff to Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-
           DIFF=$(cat pr_trimmed.diff)
 
-          PROMPT=$(cat <<EOF
-Eres un Senior Software Engineer realizando un code review.
+          PROMPT="Eres un Senior Software Engineer haciendo code review.
 
-Analiza el siguiente diff de un Pull Request.
+          Analiza el siguiente diff de un Pull Request.
 
-Responde SIEMPRE en español y usa Markdown.
+          Responde en español usando Markdown.
 
-Estructura:
+          Estructura:
+          - Resumen del PR
+          - Problemas detectados
+          - Problemas de seguridad
+          - Performance
+          - Mejoras recomendadas
+          - Score del PR (1-10)
 
-## Resumen del PR
+          Diff:
+          $DIFF"
 
-## Problemas detectados
-- Bugs potenciales
-- Edge cases
-
-## Seguridad
-- Vulnerabilidades
-- Validaciones faltantes
-
-## Performance
-
-## Mejoras recomendadas
-- Refactor
-- Clean code
-- Buenas prácticas
-
-## Score del PR
-Da una puntuación del 1 al 10 y explica brevemente.
-
-Diff del PR:
-
-$DIFF
-EOF
-)
-
-          echo "Sending request to Gemini..."
+          JSON=$(jq -n --arg prompt "$PROMPT" \
+          '{contents:[{parts:[{text:$prompt}]}]}')
 
           RESPONSE=$(curl -s \
             -H "Content-Type: application/json" \
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY" \
-            -d "$(jq -n --arg prompt "$PROMPT" '{contents:[{parts:[{text:$prompt}]}]}')")
+            -d "$JSON")
 
-          echo "Gemini raw response:"
           echo "$RESPONSE"
 
-          COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
-
-          if [ -z "$COMMENT" ]; then
-            COMMENT="⚠️ No se pudo generar el review automático del PR.
-
-Posibles causas:
-- API key inválida
-- Límite de cuota de Gemini
-- Diff demasiado grande
-- Error en la respuesta de la API."
-          fi
+          COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // "No se pudo generar review."')
 
           echo "COMMENT<<EOF" >> $GITHUB_ENV
           echo "$COMMENT" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
-      - name: Comment PR with review
+      - name: Comment PR
         uses: actions/github-script@v7
         with:
           script: |
             const body = `
-## 🤖 AI Code Review
+            ## 🤖 AI Code Review
 
-${process.env.COMMENT}
+            ${process.env.COMMENT}
 
----
-Review generado automáticamente con Gemini
-`
+            ---
+            Review generado automáticamente con Gemini
+            `
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
