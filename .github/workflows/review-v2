@@ -1,0 +1,216 @@
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get PR files
+        run: |
+          curl -s \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            ${{ github.api_url }}/repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
+            > files.json
+
+      - name: Build filtered diffs
+        run: |
+
+          mkdir diffs
+
+          jq -r '
+          .[]
+          | select(.patch != null)
+          | select(.patch | length > 80)
+
+          # ignore junk files
+          | select(.filename | test("package-lock|yarn.lock|pnpm-lock|dist|build|coverage|node_modules|\\.snap|\\.map|\\.min\\.js") | not)
+
+          # only code files
+          | select(.filename | test("\\.(ts|tsx|js|jsx|py|go|java|rs|cs|cpp|c|kt|swift)$"))
+
+          | .filename + "|||SPLIT|||" + .patch
+          ' files.json > files_filtered.txt
+
+      - name: Stop if no relevant changes
+        run: |
+
+          if [ ! -s files_filtered.txt ]; then
+            echo "No relevant code changes"
+            exit 0
+          fi
+
+      - name: Analyze files with Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+
+          echo "" > review.md
+          TOTAL_SCORE=0
+          FILE_COUNT=0
+
+          while IFS='|||SPLIT|||' read -r FILE PATCH
+          do
+
+            echo "Reviewing $FILE"
+
+            PATCH_TRIM=$(echo "$PATCH" | head -c 20000)
+
+            PROMPT="Eres un Senior Software Engineer haciendo code review.
+
+Analiza el siguiente diff de un archivo.
+
+Archivo: $FILE
+
+Reglas:
+- No inventes problemas si el código está correcto.
+- Si no hay problemas relevantes, dilo claramente.
+- Solo muestra snippets de código corregido si hay errores.
+- No repitas todo el código.
+- Sé conciso.
+
+Responde en Markdown usando esta estructura:
+
+### $FILE
+
+Problemas detectados:
+- lista corta o 'Ninguno relevante'
+
+Seguridad:
+- problemas si existen
+
+Performance:
+- mejoras si aplican
+
+Score:
+Score: número entre 1 y 10
+
+Diff:
+$PATCH_TRIM
+"
+
+            JSON=$(jq -n --arg prompt "$PROMPT" \
+            '{contents:[{parts:[{text:$prompt}]}]}')
+
+            RESPONSE=$(curl -s \
+              -H "Content-Type: application/json" \
+              "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_API_KEY" \
+              -d "$JSON")
+
+            COMMENT=$(echo "$RESPONSE" | jq -r '
+              .candidates[0].content.parts[0].text
+              // ""
+            ')
+
+            if [ -z "$COMMENT" ]; then
+              continue
+            fi
+
+            echo "$COMMENT" >> review.md
+            echo "" >> review.md
+
+            SCORE=$(echo "$COMMENT" | grep -oE 'Score[: ]+[0-9]+' | grep -oE '[0-9]+' | head -1)
+
+            if [ -z "$SCORE" ]; then
+              SCORE=10
+            fi
+
+            TOTAL_SCORE=$((TOTAL_SCORE + SCORE))
+            FILE_COUNT=$((FILE_COUNT + 1))
+
+          done < files_filtered.txt
+
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            FINAL_SCORE=10
+          else
+            FINAL_SCORE=$((TOTAL_SCORE / FILE_COUNT))
+          fi
+
+          echo "Final Score: $FINAL_SCORE"
+
+          echo "FINAL_SCORE=$FINAL_SCORE" >> $GITHUB_ENV
+
+          echo "COMMENT<<EOF" >> $GITHUB_ENV
+          echo "## 🤖 AI Code Review" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          cat review.md >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "## Score final" >> $GITHUB_ENV
+          echo "Score: $FINAL_SCORE / 10" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Comment or update PR review
+        uses: actions/github-script@v7
+        with:
+          script: |
+
+            const score = parseInt(process.env.FINAL_SCORE)
+
+            let emoji = "🟢"
+            if (score < 5) emoji = "🔴"
+            else if (score < 8) emoji = "🟡"
+
+            const body = `
+            ## 🤖 AI Code Review ${emoji}
+
+            **Score:** ${score}/10
+
+            ${process.env.COMMENT}
+
+            ---
+            Review generado automáticamente con Gemini Flash
+            `
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            })
+
+            const botComment = comments.find(comment =>
+              comment.body.includes("🤖 AI Code Review")
+            )
+
+            if (botComment) {
+
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              })
+
+            } else {
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              })
+
+            }
+
+      - name: Fail if score < 5
+        run: |
+
+          echo "Score obtenido: $FINAL_SCORE"
+
+          if [ "$FINAL_SCORE" -lt 5 ]; then
+            echo "❌ PR bloqueado: Score menor a 5"
+            exit 1
+          fi
