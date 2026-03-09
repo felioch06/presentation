@@ -26,7 +26,7 @@ jobs:
             -H "Accept: application/vnd.github.v3.diff" \
             ${{ github.event.pull_request.url }} > pr.diff
 
-          head -c 10000 pr.diff > pr_trimmed.diff
+          head -c 200000 pr.diff > pr_trimmed.diff
 
       - name: Send diff to Gemini
         env:
