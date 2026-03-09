@@ -26,12 +26,14 @@ jobs:
             -H "Accept: application/vnd.github.v3.diff" \
             ${{ github.event.pull_request.url }} > pr.diff
 
-          head -c 200000 pr.diff > pr_trimmed.diff
+          # limit diff size
+          head -c 120000 pr.diff > pr_trimmed.diff
 
       - name: Send diff to Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
+
           DIFF=$(cat pr_trimmed.diff)
 
           PROMPT="Eres un Senior Software Engineer haciendo code review.
@@ -40,13 +42,20 @@ jobs:
 
           Responde en español usando Markdown.
 
-          Estructura:
-          - Resumen del PR
-          - Problemas detectados
-          - Problemas de seguridad
-          - Performance
-          - Mejoras recomendadas
-          - Score del PR (1-10)
+          Estructura EXACTA:
+
+          ## Resumen del PR
+
+          ## Problemas detectados
+
+          ## Problemas de seguridad
+
+          ## Performance
+
+          ## Mejoras recomendadas
+
+          ## Score
+          Score: numero entre 1 y 10
 
           Diff:
           $DIFF"
@@ -67,12 +76,32 @@ jobs:
           echo "$COMMENT" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
+      - name: Extract Score
+        run: |
+          SCORE=$(echo "$COMMENT" | grep -oE 'Score[: ]+[0-9]+' | grep -oE '[0-9]+' | head -1)
+
+          if [ -z "$SCORE" ]; then
+            SCORE=10
+          fi
+
+          echo "Score detectado: $SCORE"
+
+          echo "SCORE=$SCORE" >> $GITHUB_ENV
+
       - name: Comment PR
         uses: actions/github-script@v7
         with:
           script: |
+            const score = process.env.SCORE
+
+            let emoji = "🟢"
+            if (score < 5) emoji = "🔴"
+            else if (score < 8) emoji = "🟡"
+
             const body = `
-            ## 🤖 AI Code Review
+            ## 🤖 AI Code Review ${emoji}
+
+            **Score:** ${score}/10
 
             ${process.env.COMMENT}
 
@@ -86,3 +115,12 @@ jobs:
               issue_number: context.issue.number,
               body
             })
+
+      - name: Fail if score < 5
+        run: |
+          echo "Score obtenido: $SCORE"
+
+          if [ "$SCORE" -lt 5 ]; then
+            echo "❌ PR bloqueado: Score menor a 5"
+            exit 1
+          fi
