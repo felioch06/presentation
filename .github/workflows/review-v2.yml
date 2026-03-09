@@ -72,7 +72,7 @@ jobs:
 
           RESPONSE=$(curl -s -X POST \
             -H "Content-Type: application/json" \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$GEMINI_API_KEY" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_API_KEY" \
             -d @payload.json)
 
           # Extraer el texto de forma segura
@@ -97,7 +97,7 @@ jobs:
             
             let emoji = score >= 8 ? "🟢" : (score >= 5 ? "🟡" : "🔴");
             
-            const finalBody = `## 🤖 AI Code Review ${emoji}\n\n${commentBody}\n\n---\n*Generado por Gemini 1.5 Flash*`;
+            const finalBody = `## 🤖 AI Code Review ${emoji}\n\n${commentBody}\n\n---\n*Generado por Gemini*`;
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
