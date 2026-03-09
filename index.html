@@ -512,7 +512,8 @@
 
     // Inicializar contador
     totalSlidesSpan.textContent = slides?.length || 0;
-    
+
+    let total = totalSlidesSpan.length || 0
     function showSlide(index) {
         // Validar límites
         if (index < 0) index = 0;
