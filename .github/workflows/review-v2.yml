@@ -71,37 +71,37 @@ jobs:
             PATCH_TRIM=$(echo "$PATCH" | head -c 20000)
 
             PROMPT="Eres un Senior Software Engineer haciendo code review.
-
-Analiza el siguiente diff de un archivo.
-
-Archivo: $FILE
-
-Reglas:
-- No inventes problemas si el código está correcto.
-- Si no hay problemas relevantes, dilo claramente.
-- Solo muestra snippets de código corregido si hay errores.
-- No repitas todo el código.
-- Sé conciso.
-
-Responde en Markdown usando esta estructura:
-
-### $FILE
-
-Problemas detectados:
-- lista corta o 'Ninguno relevante'
-
-Seguridad:
-- problemas si existen
-
-Performance:
-- mejoras si aplican
-
-Score:
-Score: número entre 1 y 10
-
-Diff:
-$PATCH_TRIM
-"
+          
+          Analiza el siguiente diff de un archivo.
+          
+          Archivo: $FILE
+          
+          Reglas:
+          - No inventes problemas si el código está correcto.
+          - Si no hay problemas relevantes, dilo claramente.
+          - Solo muestra snippets de código corregido si hay errores.
+          - No repitas todo el código.
+          - Sé conciso.
+          
+          Responde en Markdown usando esta estructura:
+          
+          ### $FILE
+          
+          Problemas detectados:
+          - lista corta o 'Ninguno relevante'
+          
+          Seguridad:
+          - problemas si existen
+          
+          Performance:
+          - mejoras si aplican
+          
+          Score:
+          Score: número entre 1 y 10
+          
+          Diff:
+          $PATCH_TRIM
+          "
 
             JSON=$(jq -n --arg prompt "$PROMPT" \
             '{contents:[{parts:[{text:$prompt}]}]}')
