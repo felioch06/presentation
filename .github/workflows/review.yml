@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install jq
@@ -26,55 +26,42 @@ jobs:
             -H "Accept: application/vnd.github.v3.diff" \
             ${{ github.event.pull_request.url }} > pr.diff
 
-          head -c 8000 pr.diff > pr_trimmed.diff
+          head -c 10000 pr.diff > pr_trimmed.diff
 
-      - name: Call Gemini API
+      - name: Send diff to Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-
           DIFF=$(cat pr_trimmed.diff)
 
           PROMPT="Eres un Senior Software Engineer haciendo code review.
 
-Analiza el siguiente diff de un Pull Request.
+          Analiza el siguiente diff de un Pull Request.
 
-Responde en español en Markdown con:
+          Responde en español usando Markdown.
 
-## Resumen
-## Problemas detectados
-## Seguridad
-## Performance
-## Mejoras recomendadas
-## Score del PR (1-10)
+          Estructura:
+          - Resumen del PR
+          - Problemas detectados
+          - Problemas de seguridad
+          - Performance
+          - Mejoras recomendadas
+          - Score del PR (1-10)
 
-Diff:
-$DIFF"
+          Diff:
+          $DIFF"
 
           JSON=$(jq -n --arg prompt "$PROMPT" \
           '{contents:[{parts:[{text:$prompt}]}]}')
 
           RESPONSE=$(curl -s \
-            -X POST \
             -H "Content-Type: application/json" \
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=$GEMINI_API_KEY" \
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=$GEMINI_API_KEY" \
             -d "$JSON")
 
           echo "$RESPONSE"
 
-          ERROR=$(echo "$RESPONSE" | jq -r '.error.message // empty')
-
-          if [ ! -z "$ERROR" ]; then
-            COMMENT="❌ Error al llamar Gemini:
-
-$ERROR"
-          else
-            COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
-          fi
-
-          if [ -z "$COMMENT" ]; then
-            COMMENT="⚠️ Gemini no devolvió review."
-          fi
+          COMMENT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // "No se pudo generar review."')
 
           echo "COMMENT<<EOF" >> $GITHUB_ENV
           echo "$COMMENT" >> $GITHUB_ENV
@@ -84,16 +71,18 @@ $ERROR"
         uses: actions/github-script@v7
         with:
           script: |
-            const body = `## 🤖 AI Code Review
+            const body = `
+            ## 🤖 AI Code Review
 
-${process.env.COMMENT}
+            ${process.env.COMMENT}
 
----
-Review generado automáticamente con Gemini
-`
+            ---
+            Review generado automáticamente con Gemini
+            `
 
             await github.rest.issues.createComment({
-              ...context.repo,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
               issue_number: context.issue.number,
               body
             })
