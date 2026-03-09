@@ -510,9 +510,7 @@
     const totalSlidesSpan = document.getElementById('totalSlides');
     const currentSlideSpan = document.getElementById('currentSlide');
 
-    var a = 1
-    var b = 2
-    var c = 1 + 2 + 3 + a + b
+    const pepe = "HOLA"
 
     // Inicializar contador
     totalSlidesSpan.textContent = slides.length;
@@ -546,7 +544,7 @@
 
     // Teclado
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'ArrowRight' || e.key === ' ') {
+        if (e.key === 'ArrowRight' || e.key === ' ' || pepe) {
             nextSlide();
         }
         if (e.key === 'ArrowLeft') {
